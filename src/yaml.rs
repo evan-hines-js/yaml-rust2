@@ -693,6 +693,19 @@ impl Yaml {
                 return Yaml::Integer(i);
             }
         }
+        // YAML 1.1: leading zero means octal (e.g., 0644 = 420)
+        // Only digits 0-7 are valid; 8 or 9 means it's a string, not a number
+        #[cfg(feature = "yaml-1-1")]
+        if let Some(number) = v.strip_prefix('0') {
+            if !number.is_empty() && number.bytes().all(|b| matches!(b, b'0'..=b'7')) {
+                if let Ok(i) = i64::from_str_radix(number, 8) {
+                    return Yaml::Integer(i);
+                }
+            } else if !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()) {
+                // Has digits 8 or 9 - not valid octal, treat as string per YAML 1.1
+                return Yaml::String(v.to_owned());
+            }
+        }
         match v {
             "" | "~" | "null" => Yaml::Null,
             "true" | "True" | "TRUE" => Yaml::Boolean(true),
@@ -953,5 +966,51 @@ c: [1, 2]
     fn test_or() {
         assert_eq!(Yaml::Null.or(Yaml::Integer(3)), Yaml::Integer(3));
         assert_eq!(Yaml::Integer(3).or(Yaml::Integer(7)), Yaml::Integer(3));
+    }
+}
+
+#[cfg(all(test, feature = "yaml-1-1"))]
+mod yaml_1_1_tests {
+    use super::{Yaml, YamlLoader};
+
+    #[test]
+    fn test_octal_parsing() {
+        // YAML 1.1: leading zero means octal
+        assert_eq!(Yaml::from_str("0644"), Yaml::Integer(420)); // 0644 octal = 420 decimal
+        assert_eq!(Yaml::from_str("0755"), Yaml::Integer(493)); // 0755 octal = 493 decimal
+        assert_eq!(Yaml::from_str("0400"), Yaml::Integer(256)); // 0400 octal = 256 decimal
+        assert_eq!(Yaml::from_str("0777"), Yaml::Integer(511)); // 0777 octal = 511 decimal
+    }
+
+    #[test]
+    fn test_octal_in_document() {
+        let yaml = "defaultMode: 0644";
+        let docs = YamlLoader::load_from_str(yaml).unwrap();
+        let doc = &docs[0];
+        assert_eq!(doc["defaultMode"].as_i64(), Some(420));
+    }
+
+    #[test]
+    fn test_explicit_octal_still_works() {
+        // 0o prefix should still work
+        assert_eq!(Yaml::from_str("0o755"), Yaml::Integer(493));
+    }
+
+    #[test]
+    fn test_hex_still_works() {
+        // 0x prefix should still work
+        assert_eq!(Yaml::from_str("0x1A4"), Yaml::Integer(420));
+    }
+
+    #[test]
+    fn test_zero_alone() {
+        // Just "0" should be 0
+        assert_eq!(Yaml::from_str("0"), Yaml::Integer(0));
+    }
+
+    #[test]
+    fn test_invalid_octal_becomes_string() {
+        // 8 and 9 are not valid octal digits, so this should be a string
+        assert!(matches!(Yaml::from_str("0890"), Yaml::String(_)));
     }
 }

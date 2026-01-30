@@ -25,6 +25,8 @@ exclude = [
 default = [ "encoding" ]
 debug_prints = []
 encoding = [ "dep:encoding_rs" ]
+# YAML 1.1 compatibility: treat leading-zero integers as octal (0644 = 420)
+yaml-1-1 = []
 
 [dependencies]
 arraydeque = "0.5.1"
